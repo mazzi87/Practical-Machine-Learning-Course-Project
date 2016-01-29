@@ -1,0 +1,135 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Andrea Mazzanti"
+date: "January 28, 2016"
+output: html_document
+---
+
+## Introduction
+
+Data from accelerometers on the belt, forearm, arm, and dumbell of 6 research study participants is given. 
+The training data consists of accelerometer data and a label that identifies the quality of the activity for each participant. The testing data has the same structure of the training data without the identifying label. The goal is to predict the labels for observations in the test set.
+
+## Processing Data
+
+### Required Libraries
+
+Let's first load the packages we will use:
+
+```{r, results="hide"}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+
+### Importing Data
+
+The first step is to import the data:
+
+```{r}
+# get rid of the first column since it is just the index of the row
+train <- read.csv("pml-training.csv", na.strings = c("", "NA"))[,-1]
+test <- read.csv("pml-testing.csv", na.strings = c("", "NA"))[,-1]
+```
+
+### Dealing with NAs
+I decided to get rid of both variables that had NAs values and other extraneous columns for my model.
+
+```{r}
+# Count the number of non-NAs for each variable
+nonNAs <- function(x) {
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(train)
+drops <- c()
+for (i in 1:length(colcnts)) {
+    if (colcnts[i] < nrow(train)) {
+        drops <- c(drops, i)
+    }
+}
+
+# Drop NA data and the first 6 variables (they're unnecessary for predicting)
+train2 <- train[,-drops]
+train2 <- train2[,7:ncol(train2)]
+
+test2 <- test[,-drops]
+test2 <- test2[,7:ncol(test2)]
+
+# Name of remaining variables for the training set:
+colnames(train2)
+```
+
+Let's check now what variables have no variability:
+
+```{r}
+nsv <- nearZeroVar(train2, saveMetrics=TRUE)
+# I show here the variable that are near zero variance variables:
+which(nsv$nzv == TRUE)
+```
+
+Given this returns an empty vector, there's no need to eliminate any covariates due to lack of variablility.
+
+## Model Selection
+
+Since the provided testing set is very small, I decided to split the large training set in 2 different sets. The first one will be used as the real training set (train_train), the second one as the real test set (train_test):
+
+```{r}
+## set the seed for reproducibility
+set.seed(12345)
+## training set will be 70% large as the original train2
+inTrain <- createDataPartition(y=train2$classe, p=0.7, list=F)
+train_train <- train2[inTrain, ]
+train_test <- train2[-inTrain, ]
+```
+
+I started with a Random Forest model in order to assess its performance. I fit the model on train_train, and passed to the caret "train" function the 2-fold cross-validation in order to select optimal tuning parameters:
+
+```{r}
+## use 2-fold CV to select optimal tuning parameters
+fitControl <- trainControl(method="cv", verboseIter=F, number = 2)
+
+## fit model on train_train
+fit <- train(classe ~ ., data=train_train, method="rf", trControl=fitControl)
+## print final model
+fit$finalModel
+```
+
+Let's use the fitted model to predict the "classe" variable in train_test, and print the associated confusion matrix:
+
+```{r}
+## predict classe in test set (train_test)
+preds <- predict(fit, newdata=train_test)
+## print confusion matrix to get estimate of out of sample error
+confusionMatrix(train_test$classe, preds)
+```
+
+The accuracy is 98.8%, which means the predicted accuracy for the out of sample error is 1.2%.
+
+This is a very good accuracy, so I decided to stick with this model.
+
+## Test Set Predictions
+
+Finally, using this model, I can make prediction for the "classe" variable for the test set:
+
+```{r}
+preds_test <- predict(fit, newdata=test2)
+
+## convert predictions into a char vector
+preds_test <- as.character(preds_test)
+
+## function to write predictions to file
+pml_write_files <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+
+# create prediction files to submit
+pml_write_files(preds_test)
+```
